@@ -28,6 +28,10 @@ const courseSchema = new mongoose.Schema(
         description: String,
         subtopics: [String],
         estimatedHours: Number,
+        completed: {
+          type: Boolean,
+          default: false,
+        },
         difficulty: {
           type: String,
           enum: ['easy', 'medium', 'hard'],

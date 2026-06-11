@@ -46,6 +46,7 @@ export default function ChatPage() {
   const [sending, setSending] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [error, setError] = useState('');
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const prevMessagesLength = useRef(0);
@@ -125,6 +126,7 @@ export default function ChatPage() {
     const userMessage = messageInput;
     setMessageInput('');
     setSending(true);
+    setError('');
 
     try {
       const raw = await chatAPI.sendMessage(activeConversation.conversationId, 'user', userMessage);
@@ -133,8 +135,9 @@ export default function ChatPage() {
       
       setActiveConversation(updated);
       setConversations((prev) => prev.map((c) => (c.conversationId === updated.conversationId ? updated : c)));
-    } catch (error) {
-      console.error('Error sending message:', error);
+    } catch (err: any) {
+      console.error('Error sending message:', err);
+      setError(err.message || 'Failed to send message. Check that the server is running and GEMINI_API_KEY is configured.');
     } finally {
       setSending(false);
     }
@@ -338,6 +341,11 @@ export default function ChatPage() {
 
               {/* Input Area */}
               <div className="p-4 bg-black/20 border-t border-white/10 shrink-0">
+                {error && (
+                  <div className="max-w-4xl mx-auto mb-3 px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-sm">
+                    {error}
+                  </div>
+                )}
                 <form onSubmit={handleSendMessage} className="max-w-4xl mx-auto relative flex items-end gap-2 bg-white/5 border border-white/10 p-2 rounded-2xl focus-within:border-indigo-500/50 focus-within:ring-1 focus-within:ring-indigo-500/50 transition-all">
                   <textarea
                     rows={1}

@@ -95,6 +95,11 @@ router.post('/:conversationId/messages', authMiddleware, async (req, res) => {
 
     // Generate AI response if user message
     if (sender === 'user') {
+      console.log('[chat] Incoming user message', {
+        conversationId: req.params.conversationId,
+        contentLength: content.length,
+        topic: conversation.context?.topic,
+      });
       try {
         const aiContent = await generateAIResponse(content, conversation.context);
         const mentionedTopics = extractTopicMentions(content);
@@ -109,7 +114,7 @@ router.post('/:conversationId/messages', authMiddleware, async (req, res) => {
 
         conversation.messages.push(aiResponse);
       } catch (aiError) {
-        console.error('[v0] Gemini AI error:', aiError.message);
+        console.error('[chat] Gemini AI error:', aiError.message, aiError.stack);
         conversation.messages.push({
           id: uuidv4(),
           sender: 'assistant',

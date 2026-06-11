@@ -73,7 +73,7 @@ router.post('/generate', authMiddleware, async (req, res) => {
       }
     }
 
-    // Call Gemini AI to generate contextual flashcards
+    console.log('[revision] AI generate request', { courseId, topic });
     const generatedCards = await generateRevisionCards(topic, syllabusContext);
 
     const revisionCards = generatedCards.map((card) => ({

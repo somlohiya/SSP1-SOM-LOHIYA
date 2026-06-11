@@ -27,6 +27,7 @@ export default function QuizPage() {
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [submitted, setSubmitted] = useState(false);
   const [score, setScore] = useState(0);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     courseAPI.getAll().then(setCourses).catch(console.error);
@@ -36,13 +37,15 @@ export default function QuizPage() {
     e.preventDefault();
     if (!selectedCourse || !topic) return;
     setLoading(true);
+    setError('');
     try {
       const generated = await quizAPI.generate(selectedCourse, topic, difficulty, numQuestions);
       setQuiz(generated);
       setAnswers({});
       setSubmitted(false);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      setError(err.message || 'Failed to generate quiz. Ensure GEMINI_API_KEY is set in server/.env.');
     } finally {
       setLoading(false);
     }
@@ -111,6 +114,11 @@ export default function QuizPage() {
               </div>
               
               <form onSubmit={handleGenerate} className="space-y-5">
+                {error && (
+                  <div className="px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-sm">
+                    {error}
+                  </div>
+                )}
                 <div>
                   <label className="block text-sm font-semibold text-slate-300 mb-2">Target Course</label>
                   <select 

@@ -23,6 +23,7 @@ export default function RevisionPage() {
   const [loading, setLoading] = useState(false);
   const [schedules, setSchedules] = useState<any[]>([]);
   const [activeCourseId, setActiveCourseId] = useState<string | null>(null);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     courseAPI.getAll().then(setCourses).catch(console.error);
@@ -42,12 +43,14 @@ export default function RevisionPage() {
     e.preventDefault();
     if (!selectedCourse || !topic) return;
     setLoading(true);
+    setError('');
     try {
       await revisionAPI.generate(selectedCourse, topic);
       loadSchedules(selectedCourse);
-      setTopic(''); // clear after success
-    } catch (err) {
+      setTopic('');
+    } catch (err: any) {
       console.error(err);
+      setError(err.message || 'Failed to generate revision cards. Ensure GEMINI_API_KEY is set in server/.env.');
     } finally {
       setLoading(false);
     }
@@ -83,6 +86,11 @@ export default function RevisionPage() {
           <div className="lg:col-span-4 space-y-6">
             <motion.div initial="hidden" animate="show" variants={fadeUp} className="bg-white/5 border border-white/10 rounded-3xl p-6 backdrop-blur-2xl shadow-xl">
               <form onSubmit={handleGenerate} className="space-y-5">
+                {error && (
+                  <div className="px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-sm">
+                    {error}
+                  </div>
+                )}
                 <div>
                   <label className="block text-sm font-semibold text-slate-300 mb-2">Target Course</label>
                   <select 

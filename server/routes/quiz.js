@@ -30,6 +30,7 @@ router.post('/generate', authMiddleware, async (req, res) => {
       }
     }
 
+    console.log('[quiz] Generate request', { courseId, topic, difficulty, numQuestions });
     const generatedQuestions = await generateQuiz(topic, syllabusContext, { difficulty, numQuestions });
 
     const quiz = new Quiz({

@@ -1,70 +1,123 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import OpenAI from 'openai';
+import '../config/env.js';
 
-let genAI = null;
+// ─── OpenRouter client (OpenAI-compatible) ───────────────────────────────────
+const MODEL = 'deepseek/deepseek-chat-v3-0324';
+
+let openaiClient = null;
 let cachedApiKey = null;
 
-const getModel = () => {
-  const apiKey = process.env.GEMINI_API_KEY;
-
-  if (!apiKey) {
-    console.error('[AI] ❌ GEMINI_API_KEY is not set in server/.env');
-    throw new Error('Gemini API key not configured. Set GEMINI_API_KEY in server/.env');
-  }
-
-  if (!apiKey.startsWith('AIza')) {
-    console.error('[AI] ❌ GEMINI_API_KEY appears invalid. It must start with "AIza". Current value starts with:', apiKey.substring(0, 10));
-    throw new Error('GEMINI_API_KEY is invalid. Gemini keys must start with "AIza". Please get a valid key from https://aistudio.google.com/app/apikey');
-  }
-
-  // Reinitialize if key changed (e.g., after .env update)
-  if (!genAI || cachedApiKey !== apiKey) {
-    cachedApiKey = apiKey;
-    genAI = new GoogleGenerativeAI(apiKey);
-    console.log('[AI] ✅ Gemini client initialized. Key prefix:', apiKey.substring(0, 10));
-  }
-
-  return genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+const log = (level, message, meta = {}) => {
+  const prefix = '[AI]';
+  const payload = Object.keys(meta).length ? ` ${JSON.stringify(meta)}` : '';
+  if (level === 'error') console.error(`${prefix} ${message}${payload}`);
+  else console.log(`${prefix} ${message}${payload}`);
 };
 
-/**
- * AI Tutor - generate a contextual response to a student question
- */
-export const generateAIResponse = async (question, context) => {
-  console.log('[AI] 📨 Incoming question:', question);
-  console.log('[AI] 📚 Context topic:', context?.topic || 'General');
+const getClient = () => {
+  const apiKey = process.env.OPENROUTER_API_KEY?.trim();
+  if (!apiKey) {
+    log('error', 'OPENROUTER_API_KEY is not set in server/.env');
+    throw new Error('OpenRouter API key not configured. Add OPENROUTER_API_KEY to server/.env');
+  }
+  if (!openaiClient || cachedApiKey !== apiKey) {
+    cachedApiKey = apiKey;
+    openaiClient = new OpenAI({
+      baseURL: 'https://openrouter.ai/api/v1',
+      apiKey,
+      defaultHeaders: {
+        'HTTP-Referer': 'http://localhost:3000',
+        'X-Title': 'Sleek.ai Study Platform',
+      },
+    });
+    log('info', 'OpenRouter client initialized', { keyPrefix: apiKey.substring(0, 12) });
+  }
+  return openaiClient;
+};
 
+// ─── Core text-generation helper ─────────────────────────────────────────────
+const generateContent = async (prompt, label = 'request') => {
+  const client = getClient();
+  log('info', `Sending ${label} to OpenRouter`, { model: MODEL, promptLength: prompt.length });
+  const start = Date.now();
   try {
-    const model = getModel();
+    const response = await client.chat.completions.create({
+      model: MODEL,
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.7,
+    });
+    const text = response.choices?.[0]?.message?.content || '';
+    log('info', `OpenRouter ${label} succeeded`, { durationMs: Date.now() - start, responseLength: text.length });
+    return text;
+  } catch (error) {
+    log('error', `OpenRouter ${label} failed`, { durationMs: Date.now() - start, error: error.message });
+    throw mapOpenRouterError(error);
+  }
+};
 
-    const prompt = `You are an expert AI study tutor. The student is studying "${context?.topic || 'general academic material'}".
+// ─── Error mapper ─────────────────────────────────────────────────────────────
+const mapOpenRouterError = (error) => {
+  const msg = error.message || String(error);
+  if (msg.includes('401') || msg.includes('invalid_api_key') || msg.includes('Unauthorized')) {
+    return new Error('OPENROUTER_API_KEY is invalid or expired. Update server/.env with a valid key from https://openrouter.ai/keys');
+  }
+  if (msg.includes('429') || msg.includes('quota') || msg.includes('rate limit')) {
+    return new Error('OpenRouter rate limit reached. Wait a moment and try again, or upgrade your plan at https://openrouter.ai');
+  }
+  if (msg.includes('404') || msg.includes('not found')) {
+    return new Error(`OpenRouter model unavailable: ${msg}`);
+  }
+  return new Error(`OpenRouter AI error: ${msg}`);
+};
+
+// ─── JSON parser helper ───────────────────────────────────────────────────────
+const parseJsonFromAI = (raw, fallback = null) => {
+  if (!raw) return fallback;
+  let clean = raw.trim();
+  clean = clean.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  const start = clean.indexOf('[') >= 0 ? clean.indexOf('[') : clean.indexOf('{');
+  const end = Math.max(clean.lastIndexOf(']'), clean.lastIndexOf('}'));
+  if (start >= 0 && end > start) {
+    clean = clean.slice(start, end + 1);
+  }
+  try {
+    return JSON.parse(clean);
+  } catch (parseError) {
+    log('error', 'JSON parse failed', { preview: clean.slice(0, 200), error: parseError.message });
+    return fallback;
+  }
+};
+
+// ─── Public exports ───────────────────────────────────────────────────────────
+
+export const checkAIHealth = async () => {
+  const apiKey = process.env.OPENROUTER_API_KEY?.trim();
+  if (!apiKey) {
+    return { status: 'error', configured: false, message: 'OPENROUTER_API_KEY is not set in server/.env' };
+  }
+  try {
+    const text = await generateContent('Reply with exactly: OK', 'health-check');
+    return { status: 'ok', configured: true, keyValid: true, message: text.trim().slice(0, 50) };
+  } catch (error) {
+    return { status: 'error', configured: true, keyValid: false, message: error.message };
+  }
+};
+
+export const generateAIResponse = async (question, context) => {
+  log('info', 'Incoming chat question', { topic: context?.topic || 'General', questionLength: question.length });
+
+  const prompt = `You are an expert AI study tutor. The student is studying "${context?.topic || 'general academic material'}".
 
 Student's question: ${question}
 
 Provide a clear, educational, and concise answer. Use bullet points where helpful. Keep it focused and accurate.`;
 
-    console.log('[AI] 🚀 Sending request to Gemini API...');
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
-    console.log('[AI] ✅ Gemini response received. Length:', text.length, 'chars');
-    return text;
-  } catch (error) {
-    console.error('[AI] ❌ generateAIResponse failed:', error.message);
-    if (error.message.includes('API_KEY_INVALID') || error.message.includes('401')) {
-      throw new Error('Your GEMINI_API_KEY is invalid or expired. Please update it in server/.env with a valid key from https://aistudio.google.com/app/apikey');
-    }
-    if (error.message.includes('quota') || error.message.includes('429')) {
-      throw new Error('Gemini API quota exceeded. Please wait or upgrade your plan at https://aistudio.google.com');
-    }
-    throw new Error(`Gemini AI error: ${error.message}`);
-  }
+  return generateContent(prompt, 'chat');
 };
 
-/**
- * Extract topics from syllabus text using Gemini
- */
 export const extractTopicsWithAI = async (text) => {
+  log('info', 'Incoming syllabus analysis', { textLength: text.length });
   try {
-    const model = getModel();
     const prompt = `Analyze this syllabus text and extract the main study topics.
 
 Syllabus content:
@@ -78,33 +131,29 @@ Return a JSON array of topics. Each topic must have:
 Return ONLY valid JSON, no markdown, no explanation. Example:
 [{"name":"Topic Name","description":"What it covers.","weight":0.8}]`;
 
-    const result = await model.generateContent(prompt);
-    const raw = result.response.text().trim();
-    const clean = raw.replace(/```json|```/g, '').trim();
-    return JSON.parse(clean);
+    const raw = await generateContent(prompt, 'syllabus-extract');
+    const topics = parseJsonFromAI(raw, null);
+    if (!Array.isArray(topics) || topics.length === 0) {
+      log('error', 'Syllabus extract returned empty or invalid array');
+      return null;
+    }
+    return topics;
   } catch (error) {
-    console.error('[AI] extractTopicsWithAI error:', error.message);
-    return null; // caller falls back to regex extraction
+    log('error', 'extractTopicsWithAI failed', { error: error.message });
+    return null;
   }
 };
 
-/**
- * Generate quiz questions using Gemini
- */
 export const generateQuiz = async (topic, syllabusContext = '', options = {}) => {
-  try {
-    const model = getModel();
-    const context = syllabusContext ? `\nSyllabus context: ${syllabusContext.slice(0, 3000)}` : '';
+  const difficulty = options.difficulty || 'Medium';
+  const numQuestions = parseInt(options.numQuestions, 10) || 5;
+  const context = syllabusContext ? `\nSyllabus context: ${syllabusContext.slice(0, 3000)}` : '';
 
-    const difficulty = options.difficulty || 'Medium';
-    const numQuestions = parseInt(options.numQuestions, 10) || 5;
+  const numMcq = Math.max(1, Math.floor(numQuestions * 0.4));
+  const numTf = Math.max(1, Math.floor(numQuestions * 0.4));
+  const numShort = Math.max(1, numQuestions - numMcq - numTf);
 
-    // Calculate distribution (roughly 40% MCQ, 40% T/F, 20% Short)
-    const numMcq = Math.max(1, Math.floor(numQuestions * 0.4));
-    const numTf = Math.max(1, Math.floor(numQuestions * 0.4));
-    const numShort = Math.max(1, numQuestions - numMcq - numTf);
-
-    const prompt = `Generate a quiz about "${topic}" for a student at ${difficulty} difficulty.${context}
+  const prompt = `Generate a quiz about "${topic}" for a student at ${difficulty} difficulty.${context}
 
 Create exactly ${numQuestions} questions: ${numMcq} multiple choice, ${numTf} true/false, and ${numShort} short answer.
 
@@ -117,31 +166,23 @@ Return ONLY a valid JSON array. Each question object must have:
 
 No markdown fences, no extra text, just raw JSON.`;
 
-    const result = await model.generateContent(prompt);
-    const raw = result.response.text().trim();
-    const clean = raw.replace(/```json|```/g, '').trim();
-    return JSON.parse(clean);
-  } catch (error) {
-    console.error('[AI] generateQuiz error:', error.message);
-    throw new Error('Failed to generate quiz. Check your GEMINI_API_KEY.');
+  const raw = await generateContent(prompt, 'quiz');
+  const questions = parseJsonFromAI(raw);
+  if (!Array.isArray(questions) || questions.length === 0) {
+    throw new Error('AI returned invalid quiz format. Please try again.');
   }
+  return questions;
 };
 
-/**
- * Generate study notes using Gemini
- */
 export const generateNotes = async (topic, type, syllabusContext = '') => {
-  try {
-    const model = getModel();
-    const context = syllabusContext ? `\nSyllabus context: ${syllabusContext.slice(0, 3000)}` : '';
+  const context = syllabusContext ? `\nSyllabus context: ${syllabusContext.slice(0, 3000)}` : '';
+  const typeInstructions = {
+    short: 'Create concise bullet-point notes covering the key concepts. Keep it brief and scannable.',
+    detailed: 'Create comprehensive study notes with headings, subheadings, detailed explanations, examples, and formulas where applicable.',
+    revision: 'Create a quick revision guide with the most important points to remember, key definitions, and common exam pitfalls.',
+  };
 
-    const typeInstructions = {
-      short: 'Create concise bullet-point notes covering the key concepts. Keep it brief and scannable.',
-      detailed: 'Create comprehensive study notes with headings, subheadings, detailed explanations, examples, and formulas where applicable.',
-      revision: 'Create a quick revision guide with the most important points to remember, key definitions, and common exam pitfalls.',
-    };
-
-    const prompt = `You are an expert academic tutor. Generate study notes about "${topic}".${context}
+  const prompt = `You are an expert academic tutor. Generate study notes about "${topic}".${context}
 
 Instructions: ${typeInstructions[type] || typeInstructions.short}
 
@@ -153,36 +194,25 @@ You MUST structure the notes with the following sections:
 
 Format using strictly standard Markdown. Use ##, ###, bullet points, and **bold** for emphasis. Do not wrap the whole response in a markdown code block.`;
 
-    const result = await model.generateContent(prompt);
-    const content = result.response.text();
+  const content = await generateContent(prompt, 'notes');
 
-    // Generate important questions
-    const qPrompt = `Based on the topic "${topic}", generate 4 important exam-style questions a student should be able to answer. Return ONLY a raw JSON array of strings, no markdown formatting.`;
-    const qResult = await model.generateContent(qPrompt);
-    const qRaw = qResult.response.text().trim().replace(/```json|```/g, '').trim();
-
-    let importantQuestions = [];
-    try {
-      importantQuestions = JSON.parse(qRaw);
-    } catch {
-      importantQuestions = [`What are the key principles of ${topic}?`, `How does ${topic} apply in practice?`, `What are common misconceptions about ${topic}?`, `Explain the relationship between ${topic} and related concepts.`];
-    }
-
-    return { content, importantQuestions };
-  } catch (error) {
-    console.error('[AI] generateNotes error:', error.message);
-    throw new Error('Failed to generate notes. Check your GEMINI_API_KEY.');
+  const qPrompt = `Based on the topic "${topic}", generate 4 important exam-style questions a student should be able to answer. Return ONLY a raw JSON array of strings, no markdown formatting.`;
+  const qRaw = await generateContent(qPrompt, 'notes-questions');
+  let importantQuestions = parseJsonFromAI(qRaw, null);
+  if (!Array.isArray(importantQuestions)) {
+    importantQuestions = [
+      `What are the key principles of ${topic}?`,
+      `How does ${topic} apply in practice?`,
+      `What are common misconceptions about ${topic}?`,
+      `Explain the relationship between ${topic} and related concepts.`,
+    ];
   }
+  return { content, importantQuestions };
 };
 
-/**
- * Generate smart revision flashcards using Gemini
- */
 export const generateRevisionCards = async (topic, syllabusContext = '') => {
-  try {
-    const model = getModel();
-    const context = syllabusContext ? `\nSyllabus context: ${syllabusContext.slice(0, 3000)}` : '';
-    const prompt = `Create 6 spaced-repetition flashcards for the topic "${topic}".${context}
+  const context = syllabusContext ? `\nSyllabus context: ${syllabusContext.slice(0, 3000)}` : '';
+  const prompt = `Create 6 spaced-repetition flashcards for the topic "${topic}".${context}
 
 Focus on:
 - Core definitions
@@ -197,16 +227,70 @@ Return ONLY a valid JSON array. Each card must have:
 
 No markdown, no extra text, just raw JSON.`;
 
-    const result = await model.generateContent(prompt);
-    const raw = result.response.text().trim();
-    const clean = raw.replace(/```json|```/g, '').trim();
-    return JSON.parse(clean);
-  } catch (error) {
-    console.error('[AI] generateRevisionCards error:', error.message);
-    throw new Error('Failed to generate revision cards. Check your GEMINI_API_KEY.');
+  const raw = await generateContent(prompt, 'revision-cards');
+  const cards = parseJsonFromAI(raw);
+  if (!Array.isArray(cards) || cards.length === 0) {
+    throw new Error('AI returned invalid flashcard format. Please try again.');
   }
+  return cards;
 };
 
+export const generateStudyPlanSessions = async (topics, dailyHours, totalDays, learningStyle) => {
+  log('info', 'Generating AI study plan sessions', { topicCount: topics.length, dailyHours, totalDays, learningStyle });
+  const prompt = `Create a ${totalDays}-day study plan for these topics: ${topics.join(', ')}.
+Daily study time: ${dailyHours} hours. Learning style: ${learningStyle}.
+
+Return ONLY a JSON array with exactly ${totalDays} day objects. Each object:
+- "day": number (1 to ${totalDays})
+- "topics": array of topic names to cover that day
+- "focus": one sentence study focus for the day
+- "activities": array of 2-3 specific study activities (strings)
+- "durationMinutes": total minutes (based on ${dailyHours} hours)
+
+No markdown, raw JSON only.`;
+
+  const raw = await generateContent(prompt, 'study-plan');
+  const plan = parseJsonFromAI(raw);
+  if (!Array.isArray(plan) || plan.length === 0) {
+    throw new Error('AI returned invalid study plan format. Please try again.');
+  }
+  return plan;
+};
+
+export const generateAIRecommendations = async (courses) => {
+  const summary = (courses || [])
+    .map((c) => `${c.name}: ${(c.topics || []).map((t) => t.name).join(', ')}`)
+    .join('\n');
+
+  const prompt = `A student has studied these courses:
+${summary || 'No courses yet — they are a beginner.'}
+
+Suggest 4 personalized next courses to study. Return ONLY a JSON array. Each item:
+- "name": course name
+- "reason": why this fits the student (1 sentence)
+- "difficulty": "Beginner" | "Intermediate" | "Advanced"
+- "duration": estimated weeks as string e.g. "4 weeks"
+- "careerBenefits": one sentence
+
+No markdown, raw JSON only.`;
+
+  const raw = await generateContent(prompt, 'recommendations');
+  const recs = parseJsonFromAI(raw);
+  if (!Array.isArray(recs) || recs.length === 0) {
+    return null;
+  }
+  return recs.slice(0, 4).map((r, i) => ({
+    id: `ai-rec-${i}-${Date.now()}`,
+    name: r.name,
+    reason: r.reason,
+    difficulty: r.difficulty || 'Intermediate',
+    duration: r.duration || '4 weeks',
+    careerBenefits: r.careerBenefits || 'Expand your skillset',
+    domain: 'ai-generated',
+  }));
+};
+
+// ─── Utility exports (no AI calls needed) ────────────────────────────────────
 export const extractTopicMentions = (text) => {
   const commonTopics = ['photosynthesis', 'mitochondria', 'calculus', 'algebra', 'chemistry', 'physics', 'biology', 'history', 'literature'];
   return commonTopics.filter((topic) => text.toLowerCase().includes(topic));

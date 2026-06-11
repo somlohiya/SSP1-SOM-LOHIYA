@@ -17,11 +17,13 @@ router.post('/upload', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    // Try Gemini AI first, fall back to regex if unavailable
+    console.log('[syllabi] Incoming upload', { title, subject, contentLength: content.length });
     let topics = await extractTopicsWithAI(content);
+    let aiAnalyzed = true;
     if (!topics || topics.length === 0) {
-      console.log('[syllabi] Gemini unavailable, using regex fallback');
+      console.log('[syllabi] Gemini unavailable or returned no topics, using regex fallback');
       topics = extractTopicsFromText(content);
+      aiAnalyzed = false;
     }
     const estimatedHours = estimateStudyHours(content, topics.length);
 
@@ -41,9 +43,11 @@ router.post('/upload', authMiddleware, async (req, res) => {
     await syllabus.save();
 
     res.status(201).json({
-      message: 'Syllabus uploaded and analyzed by AI successfully',
+      message: aiAnalyzed
+        ? 'Syllabus uploaded and analyzed by AI successfully'
+        : 'Syllabus uploaded (regex topic extraction — configure GEMINI_API_KEY for AI analysis)',
       syllabus,
-      aiAnalyzed: true,
+      aiAnalyzed,
     });
   } catch (error) {
     console.error('[v0] Upload syllabus error:', error);

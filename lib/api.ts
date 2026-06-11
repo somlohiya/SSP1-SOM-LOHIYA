@@ -1,4 +1,7 @@
-const API_URL = typeof window !== 'undefined' ? 'http://localhost:5000/api' : process.env.API_URL || 'http://localhost:5000/api';
+const API_URL =
+  typeof window !== 'undefined'
+    ? (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000') + '/api'
+    : (process.env.API_URL || 'http://localhost:5000') + '/api';
 
 let authToken = typeof window !== 'undefined' ? localStorage.getItem('authToken') : null;
 
@@ -31,8 +34,14 @@ const getHeaders = () => {
 
 const handleResponse = async (response: Response) => {
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'An error occurred');
+    let message = `Request failed (${response.status})`;
+    try {
+      const error = await response.json();
+      message = error.message || error.error || message;
+    } catch {
+      message = response.statusText || message;
+    }
+    throw new Error(message);
   }
   return response.json();
 };
@@ -163,6 +172,14 @@ export const courseAPI = {
   delete: async (id: string) => {
     const response = await fetch(`${API_URL}/courses/${id}`, {
       method: 'DELETE',
+      headers: getHeaders(),
+    });
+    return handleResponse(response);
+  },
+
+  toggleTopicComplete: async (courseId: string, topicId: string) => {
+    const response = await fetch(`${API_URL}/courses/${courseId}/topics/${topicId}/complete`, {
+      method: 'PATCH',
       headers: getHeaders(),
     });
     return handleResponse(response);
@@ -374,6 +391,13 @@ export const quizAPI = {
     });
     return handleResponse(response);
   }
+};
+
+export const aiAPI = {
+  health: async () => {
+    const response = await fetch(`${API_URL.replace('/api', '')}/api/ai/health`);
+    return response.json();
+  },
 };
 
 export const notesAPI = {

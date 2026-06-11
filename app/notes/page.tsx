@@ -19,6 +19,7 @@ export default function NotesPage() {
   const [note, setNote] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     courseAPI.getAll().then(setCourses).catch(console.error);
@@ -29,11 +30,13 @@ export default function NotesPage() {
     if (!selectedCourse || !topic) return;
     setLoading(true);
     setNote(null);
+    setError('');
     try {
       const generated = await notesAPI.generate(selectedCourse, topic, type);
       setNote(generated);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      setError(err.message || 'Failed to generate notes. Ensure GEMINI_API_KEY is set in server/.env.');
     } finally {
       setLoading(false);
     }
@@ -89,6 +92,11 @@ export default function NotesPage() {
           <div className="lg:col-span-4">
             <motion.div initial="hidden" animate="show" variants={fadeUp} className="bg-white/5 border border-white/10 rounded-3xl p-6 backdrop-blur-2xl shadow-xl">
               <form onSubmit={handleGenerate} className="space-y-5">
+                {error && (
+                  <div className="px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-sm">
+                    {error}
+                  </div>
+                )}
                 <div>
                   <label className="block text-sm font-semibold text-slate-300 mb-2">Target Course</label>
                   <select 

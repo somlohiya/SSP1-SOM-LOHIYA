@@ -22,8 +22,22 @@ router.get('/recommendations', authMiddleware, async (req, res) => {
     const courses = await Course.find({ userId: req.userId });
     
     // Dynamic import to avoid circular dependency if any
-    const { generateRecommendations } = await import('../services/recommendationService.js');
-    const recommendations = generateRecommendations(courses);
+    let recommendations = [];
+    try {
+      const { generateAIRecommendations } = await import('../services/aiService.js');
+      const aiRecs = await generateAIRecommendations(courses);
+      if (aiRecs?.length) {
+        recommendations = aiRecs;
+        console.log('[courses] AI recommendations generated', { count: recommendations.length });
+      }
+    } catch (aiError) {
+      console.warn('[courses] AI recommendations failed, using rule-based fallback:', aiError.message);
+    }
+
+    if (!recommendations.length) {
+      const { generateRecommendations } = await import('../services/recommendationService.js');
+      recommendations = generateRecommendations(courses);
+    }
 
     res.json(recommendations);
   } catch (error) {
@@ -48,7 +62,7 @@ router.get('/:id', authMiddleware, async (req, res) => {
   }
 });
 
-// Update course
+// Update course (status, progress, dates)
 router.patch('/:id', authMiddleware, async (req, res) => {
   try {
     const { status, progress, startDate, endDate } = req.body;
@@ -68,13 +82,56 @@ router.patch('/:id', authMiddleware, async (req, res) => {
       return res.status(404).json({ error: 'Course not found' });
     }
 
-    res.json({
-      message: 'Course updated successfully',
-      course,
-    });
+    res.json({ message: 'Course updated successfully', course });
   } catch (error) {
-    console.error('[v0] Update course error:', error);
+    console.error('[courses] Update course error:', error);
     res.status(500).json({ error: 'Failed to update course' });
+  }
+});
+
+// Toggle topic completion — PATCH /api/courses/:id/topics/:topicMongoId/complete
+router.patch('/:id/topics/:topicMongoId/complete', authMiddleware, async (req, res) => {
+  try {
+    console.log(`[courses] Toggle topic: courseId=${req.params.id} topicId=${req.params.topicMongoId}`);
+
+    const course = await Course.findOne({ _id: req.params.id, userId: req.userId });
+
+    if (!course) {
+      return res.status(404).json({ error: 'Course not found' });
+    }
+
+    // Find topic by _id or fallback to id
+    const topic = course.topics.find(t => 
+      t._id.toString() === req.params.topicMongoId || 
+      t.id === req.params.topicMongoId
+    );
+    if (!topic) {
+      console.error(`[courses] Topic ${req.params.topicMongoId} not found.`);
+      return res.status(404).json({ error: 'Topic not found' });
+    }
+
+    // Toggle
+    topic.completed = !topic.completed;
+    console.log(`[courses] Topic "${topic.name}" → completed: ${topic.completed}`);
+
+    // Recalculate progress
+    const totalTopics = course.topics.length;
+    const completedCount = course.topics.filter(t => t.completed).length;
+    course.progress = totalTopics > 0 ? Math.round((completedCount / totalTopics) * 100) : 0;
+
+    // Auto-update status
+    if (course.progress === 100) {
+      course.status = 'completed';
+    } else if (course.progress > 0) {
+      course.status = 'in_progress';
+    }
+
+    await course.save();
+    console.log(`[courses] Progress updated to ${course.progress}%`);
+    res.json({ course });
+  } catch (error) {
+    console.error('[courses] Toggle topic completion error:', error);
+    res.status(500).json({ error: 'Failed to update topic completion' });
   }
 });
 

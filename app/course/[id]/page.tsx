@@ -1,14 +1,15 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
-import { ArrowLeft, BookOpen, Clock, TrendingUp, Trash2, X, Brain, Target, Sparkles, Zap, MessageSquare, Plus, CheckCircle2, ChevronRight, BarChart2, Calendar, RefreshCcw } from 'lucide-react';
-import { courseAPI, studyPlanAPI, revisionAPI } from '@/lib/api';
+import { ArrowLeft, BookOpen, Clock, TrendingUp, Brain, Target, Sparkles, Zap, MessageSquare, CheckCircle2, ChevronRight, Calendar, RefreshCcw, Loader2 } from 'lucide-react';
+import { courseAPI } from '@/lib/api';
 
 interface Topic {
-  id: string;
+  _id: string;    // MongoDB ObjectId — always present, used as the reliable key
+  id?: string;    // Custom AI-generated field — may be undefined on older records
   name: string;
   description: string;
   estimatedHours: number;
@@ -28,12 +29,12 @@ interface Course {
 
 const fadeUp: any = {
   hidden: { opacity: 0, y: 20 },
-  show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 300, damping: 24 } }
+  show: { opacity: 1, y: 0, transition: { type: 'spring', stiffness: 300, damping: 24 } },
 };
 
 const stagger: any = {
   hidden: { opacity: 0 },
-  show: { opacity: 1, transition: { staggerChildren: 0.1 } }
+  show: { opacity: 1, transition: { staggerChildren: 0.1 } },
 };
 
 export default function CoursePage() {
@@ -42,6 +43,7 @@ export default function CoursePage() {
   const courseId = params.id as string;
   const [course, setCourse] = useState<Course | null>(null);
   const [loading, setLoading] = useState(true);
+  const [togglingTopicId, setTogglingTopicId] = useState<string | null>(null);
 
   useEffect(() => {
     const loadData = async () => {
@@ -56,6 +58,35 @@ export default function CoursePage() {
     };
     loadData();
   }, [courseId]);
+
+  const handleToggleTopic = useCallback(async (topicId: string) => {
+    console.log('Toggling topic:', topicId);
+    if (!course || togglingTopicId || !topicId) return;
+    setTogglingTopicId(topicId);
+
+    // Optimistic update — toggle locally immediately
+    const updatedTopics = course.topics.map(t =>
+      (t._id || t.id) === topicId ? { ...t, completed: !t.completed } : t
+    );
+    const completedCount = updatedTopics.filter(t => t.completed).length;
+    const newProgress = updatedTopics.length > 0
+      ? Math.round((completedCount / updatedTopics.length) * 100)
+      : 0;
+
+    setCourse(prev => prev ? { ...prev, topics: updatedTopics, progress: newProgress } : prev);
+
+    try {
+      const result = await courseAPI.toggleTopicComplete(courseId, topicId);
+      // Sync with server's authoritative state
+      setCourse(result.course);
+    } catch (error) {
+      console.error('Error toggling topic completion:', error);
+      // Revert optimistic update on failure
+      setCourse(prev => prev ? { ...prev, topics: course.topics, progress: course.progress } : prev);
+    } finally {
+      setTogglingTopicId(null);
+    }
+  }, [course, courseId, togglingTopicId]);
 
   if (loading) {
     return (
@@ -88,7 +119,7 @@ export default function CoursePage() {
       {/* Dynamic Background */}
       <div className="absolute top-0 right-1/4 w-[500px] h-[500px] bg-indigo-600/10 rounded-full mix-blend-screen filter blur-[120px] animate-blob pointer-events-none" />
       <div className="absolute -bottom-32 left-1/3 w-[500px] h-[500px] bg-fuchsia-600/10 rounded-full mix-blend-screen filter blur-[120px] animate-blob animation-delay-4000 pointer-events-none" />
-      
+
       <div className="relative z-10">
         <nav className="border-b border-white/5 bg-black/20 backdrop-blur-xl sticky top-0 z-50">
           <div className="max-w-7xl mx-auto px-6 py-4">
@@ -99,10 +130,10 @@ export default function CoursePage() {
         </nav>
 
         <div className="max-w-7xl mx-auto px-6 py-10">
-          
+
           {/* Hero Section */}
           <motion.div initial="hidden" animate="show" variants={stagger} className="grid lg:grid-cols-12 gap-8 mb-12">
-            
+
             {/* Course Identity */}
             <motion.div variants={fadeUp} className="lg:col-span-8 bg-white/5 border border-white/10 rounded-3xl p-8 backdrop-blur-xl relative overflow-hidden group">
               <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/5 to-fuchsia-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
@@ -118,7 +149,7 @@ export default function CoursePage() {
                     <span className="px-3 py-1 rounded-full text-xs font-bold bg-white/10 text-slate-300 uppercase tracking-wider">{difficulty}</span>
                   </div>
                   <h1 className="text-4xl md:text-5xl font-extrabold text-white tracking-tight mb-4">{course.name}</h1>
-                  <p className="text-slate-400 text-lg leading-relaxed max-w-2xl">{course.description || "Master this subject with personalized AI guidance and dynamic study paths."}</p>
+                  <p className="text-slate-400 text-lg leading-relaxed max-w-2xl">{course.description || 'Master this subject with personalized AI guidance and dynamic study paths.'}</p>
                 </div>
               </div>
             </motion.div>
@@ -127,11 +158,11 @@ export default function CoursePage() {
             <motion.div variants={fadeUp} className="lg:col-span-4 bg-gradient-to-b from-indigo-500/10 to-transparent border border-indigo-500/20 rounded-3xl p-8 backdrop-blur-xl flex flex-col items-center justify-center relative overflow-hidden">
               <Sparkles className="absolute top-4 right-4 w-5 h-5 text-indigo-400/50" />
               <h3 className="text-sm font-bold text-indigo-300 uppercase tracking-wider mb-6 text-center">AI Readiness Score</h3>
-              
+
               <div className="relative w-40 h-40 flex items-center justify-center mb-4">
                 <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
                   <circle cx="50" cy="50" r="40" stroke="currentColor" strokeWidth="8" fill="none" className="text-white/5" />
-                  <circle cx="50" cy="50" r="40" stroke="currentColor" strokeWidth="8" fill="none" strokeDasharray="251.2" strokeDashoffset={251.2 - (251.2 * readinessScore) / 100} className="text-indigo-500 transition-all duration-1000 ease-out" />
+                  <circle cx="50" cy="50" r="40" stroke="currentColor" strokeWidth="8" fill="none" strokeDasharray="251.2" strokeDashoffset={251.2 - (251.2 * readinessScore) / 100} className="text-indigo-500 transition-all duration-700 ease-out" />
                 </svg>
                 <div className="absolute flex flex-col items-center justify-center text-center">
                   <span className="text-4xl font-extrabold text-white">{readinessScore}</span>
@@ -145,7 +176,7 @@ export default function CoursePage() {
           <div className="grid lg:grid-cols-12 gap-8">
             {/* Main Content */}
             <div className="lg:col-span-8 space-y-8">
-              
+
               {/* Quick Metrics */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="bg-white/5 border border-white/10 rounded-2xl p-5 backdrop-blur-xl hover:bg-white/10 transition">
@@ -177,38 +208,74 @@ export default function CoursePage() {
               {/* Topics Roadmap */}
               <div>
                 <div className="flex items-center justify-between mb-6">
-                  <h2 className="text-2xl font-bold text-white flex items-center gap-2"><Target className="w-6 h-6 text-indigo-400"/> Learning Roadmap</h2>
+                  <h2 className="text-2xl font-bold text-white flex items-center gap-2"><Target className="w-6 h-6 text-indigo-400" /> Learning Roadmap</h2>
+                  <span className="text-xs text-slate-500 font-medium">Click a topic to mark as complete</span>
                 </div>
-                
+
                 <div className="space-y-4">
-                  {course.topics?.map((topic, index) => (
-                    <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: index * 0.05 }} key={topic.id} className="group bg-white/5 border border-white/10 rounded-2xl p-6 backdrop-blur-xl hover:border-indigo-500/50 hover:bg-white/10 transition-all flex flex-col md:flex-row md:items-center justify-between gap-4">
-                      <div className="flex items-start gap-4">
-                        <div className={`mt-1 w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 ${topic.completed ? 'border-emerald-500 bg-emerald-500/20 text-emerald-400' : 'border-slate-600 bg-slate-800'}`}>
-                          {topic.completed && <CheckCircle2 className="w-3 h-3" />}
-                        </div>
-                        <div>
-                          <div className="flex flex-wrap items-center gap-2 mb-1">
-                            <h3 className="text-lg font-bold text-white">{topic.name}</h3>
-                            <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-black/40 text-slate-400 border border-white/5">
-                              {topic.estimatedHours > 3 ? 'Hard' : 'Medium'}
-                            </span>
+                  {course.topics?.map((topic, index) => {
+                    const currentId = topic._id || topic.id;
+                    const isToggling = togglingTopicId === currentId;
+                    return (
+                      <motion.div
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: index * 0.05 }}
+                        key={currentId || index}
+                        className={`group bg-white/5 border rounded-2xl p-6 backdrop-blur-xl transition-all flex flex-col md:flex-row md:items-center justify-between gap-4 ${
+                          topic.completed
+                            ? 'border-emerald-500/30 bg-emerald-500/5'
+                            : 'border-white/10 hover:border-indigo-500/50 hover:bg-white/10'
+                        }`}
+                      >
+                        <div className="flex items-start gap-4">
+                          <div className={`mt-1 w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 transition-all ${
+                            topic.completed ? 'border-emerald-500 bg-emerald-500/20 text-emerald-400' : 'border-slate-600 bg-slate-800'
+                          }`}>
+                            {topic.completed && <CheckCircle2 className="w-3 h-3" />}
                           </div>
-                          <p className="text-slate-400 text-sm">{topic.description}</p>
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2 mb-1">
+                              <h3 className={`text-lg font-bold ${topic.completed ? 'text-emerald-300 line-through opacity-70' : 'text-white'}`}>{topic.name}</h3>
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-black/40 text-slate-400 border border-white/5">
+                                {topic.estimatedHours > 3 ? 'Hard' : 'Medium'}
+                              </span>
+                              {topic.completed && (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                                  Done
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-slate-400 text-sm">{topic.description}</p>
+                          </div>
                         </div>
-                      </div>
-                      
-                      <div className="flex items-center gap-4 shrink-0 pl-10 md:pl-0">
-                        <div className="text-right">
-                          <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Est. Time</p>
-                          <p className="text-white font-medium">{topic.estimatedHours} Hours</p>
+
+                        <div className="flex items-center gap-4 shrink-0 pl-10 md:pl-0">
+                          <div className="text-right">
+                            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Est. Time</p>
+                            <p className="text-white font-medium">{topic.estimatedHours} Hours</p>
+                          </div>
+                          <button
+                            onClick={() => handleToggleTopic(currentId as string)}
+                            disabled={isToggling}
+                            title={topic.completed ? 'Mark as incomplete' : 'Mark as complete'}
+                            className={`w-10 h-10 rounded-full flex items-center justify-center transition-all border ${
+                              topic.completed
+                                ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400 hover:bg-red-500/20 hover:border-red-500/50 hover:text-red-400'
+                                : 'bg-white/5 border-white/10 hover:bg-indigo-500 hover:border-indigo-500 hover:text-white'
+                            } disabled:opacity-50 disabled:cursor-not-allowed`}
+                          >
+                            {isToggling
+                              ? <Loader2 className="w-4 h-4 animate-spin" />
+                              : topic.completed
+                                ? <CheckCircle2 className="w-4 h-4" />
+                                : <ChevronRight className="w-5 h-5" />
+                            }
+                          </button>
                         </div>
-                        <button className="w-10 h-10 rounded-full bg-white/5 hover:bg-indigo-500 hover:text-white flex items-center justify-center transition-colors border border-white/10">
-                          <ChevronRight className="w-5 h-5" />
-                        </button>
-                      </div>
-                    </motion.div>
-                  ))}
+                      </motion.div>
+                    );
+                  })}
                   {(!course.topics || course.topics.length === 0) && (
                     <div className="p-8 border border-dashed border-white/20 rounded-2xl text-center">
                       <p className="text-slate-400">No topics found. Start by generating a syllabus.</p>
@@ -220,7 +287,7 @@ export default function CoursePage() {
 
             {/* Sidebar */}
             <div className="lg:col-span-4 space-y-8">
-              
+
               {/* Quick Actions */}
               <div className="bg-white/5 border border-white/10 rounded-3xl p-6 backdrop-blur-xl">
                 <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-4 flex items-center gap-2"><Zap className="w-4 h-4 text-amber-400" /> Quick Actions</h3>
@@ -248,27 +315,32 @@ export default function CoursePage() {
               <div className="bg-gradient-to-b from-indigo-500/10 to-transparent border border-indigo-500/20 rounded-3xl p-6 backdrop-blur-xl relative overflow-hidden">
                 <Brain className="absolute -bottom-6 -right-6 w-32 h-32 text-indigo-500/10" />
                 <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-6 flex items-center gap-2"><Sparkles className="w-4 h-4 text-indigo-400" /> AI Insights</h3>
-                
+
                 <div className="space-y-6 relative z-10">
                   <div>
                     <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Strong Topics</p>
                     <div className="flex flex-wrap gap-2">
-                      <span className="px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm font-medium rounded-lg">Fundamentals</span>
+                      {course.topics?.filter(t => t.completed).slice(0, 3).map(t => (
+                        <span key={t._id} className="px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm font-medium rounded-lg">{t.name}</span>
+                      ))}
+                      {completedTopics === 0 && (
+                        <span className="text-slate-500 text-sm">Complete topics to see insights</span>
+                      )}
                     </div>
                   </div>
-                  
+
                   <div>
                     <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Focus Areas</p>
                     <div className="flex flex-wrap gap-2">
-                      {course.topics?.slice(0, 2).map(t => (
-                         <span key={t.id} className="px-3 py-1 bg-amber-500/10 border border-amber-500/20 text-amber-400 text-sm font-medium rounded-lg truncate max-w-full">{t.name}</span>
+                      {course.topics?.filter(t => !t.completed).slice(0, 2).map(t => (
+                        <span key={t._id} className="px-3 py-1 bg-amber-500/10 border border-amber-500/20 text-amber-400 text-sm font-medium rounded-lg truncate max-w-full">{t.name}</span>
                       ))}
                     </div>
                   </div>
 
                   <div className="pt-4 border-t border-white/10">
                     <p className="text-sm text-slate-300 leading-relaxed">
-                      "Based on your syllabus complexity and estimated hours, focus on the <span className="text-white font-bold">{course.topics?.[0]?.name || 'first module'}</span>. I recommend spending 2 hours daily."
+                      Based on your syllabus complexity and estimated hours, focus on the <span className="text-white font-bold">{course.topics?.find(t => !t.completed)?.name || 'all topics — you are done!'}</span>. I recommend spending 2 hours daily.
                     </p>
                   </div>
                 </div>
@@ -281,5 +353,3 @@ export default function CoursePage() {
     </main>
   );
 }
-
-

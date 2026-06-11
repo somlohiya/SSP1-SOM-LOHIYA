@@ -34,6 +34,7 @@ router.post('/generate', authMiddleware, async (req, res) => {
       }
     }
 
+    console.log('[notes] Generate request', { courseId, topic, type });
     const generated = await generateNotes(topic, type, syllabusContext);
 
     const note = new Note({

@@ -3,6 +3,7 @@ import StudyPlan from '../models/StudyPlan.js';
 import Course from '../models/Course.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { generateStudySession } from '../utils/algorithms.js';
+import { generateStudyPlanSessions } from '../services/aiService.js';
 import { v4 as uuidv4 } from 'uuid';
 
 const router = express.Router();
@@ -26,8 +27,31 @@ router.post('/', authMiddleware, async (req, res) => {
       ? course.topics.map((t) => t.name) 
       : [course.name];
 
-    // Generate sessions for the study plan distributing real topics
-    const sessions = generateStudySession(topics, dailyHours || 2, course.totalEstimatedHours || 20, totalDays || 4, startDate);
+    let sessions = generateStudySession(topics, dailyHours || 2, course.totalEstimatedHours || 20, totalDays || 4, startDate);
+
+    // Enhance with AI-generated daily focus when Gemini is available
+    try {
+      const aiPlan = await generateStudyPlanSessions(
+        topics,
+        dailyHours || 2,
+        totalDays || sessions.length,
+        learningStyle || 'mixed'
+      );
+      if (aiPlan?.length) {
+        const start = startDate ? new Date(startDate) : new Date();
+        sessions = sessions.map((session, index) => {
+          const aiDay = aiPlan[Math.min(index, aiPlan.length - 1)];
+          return {
+            ...session,
+            aiFocus: aiDay?.focus || null,
+            aiActivities: aiDay?.activities || [],
+          };
+        });
+        console.log('[study-plans] AI session enrichment applied', { days: aiPlan.length });
+      }
+    } catch (aiError) {
+      console.warn('[study-plans] AI enrichment skipped, using algorithmic schedule:', aiError.message);
+    }
 
     const studyPlan = new StudyPlan({
       courseId,
@@ -141,7 +165,9 @@ router.patch('/:id/sessions/:sessionId/complete', authMiddleware, async (req, re
       return res.status(404).json({ error: 'Study plan not found' });
     }
 
-    const session = studyPlan.sessions.find((s) => s.id === req.params.sessionId);
+    const session = studyPlan.sessions.find(
+      (s) => s._id?.toString() === req.params.sessionId || s.id === req.params.sessionId
+    );
 
     if (!session) {
       return res.status(404).json({ error: 'Session not found' });
